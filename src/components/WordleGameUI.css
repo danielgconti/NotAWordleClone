@@ -2,4 +2,8 @@
   border: rgb(147, 147, 147) 1px solid;
   height: 75px;
   width: 75px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 35px;
 }
