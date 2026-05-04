@@ -1,18 +1,20 @@
 import { Link } from "react-router-dom";
 import "./WordleGameUI.css";
 import { useEffect, useState } from "react";
-import wordBank from "../data/wordle_words.json";
 
 type TileState = "empty" | "filled" | "correct" | "present" | "absent";
 
 type Tile = { letter: string; status: TileState };
-type WordleApiResponse = { solution?: string };
+type GuessApiResponse =
+  | { validWord: false }
+  | {
+      validWord: true;
+      statuses: Exclude<TileState, "empty" | "filled">[];
+      isCorrect: boolean;
+    };
 
 const ROW_COUNT = 6;
 const COL_COUNT = 5;
-const WORD_BANK_SET = new Set(
-  (wordBank as string[]).map((word) => word.toLowerCase()),
-);
 const WORD_API_BASE =
   import.meta.env.VITE_WORD_API_BASE?.replace(/\/$/, "") ??
   "http://3.15.180.103:3001";
@@ -104,30 +106,6 @@ function promoteKeyState(
   return priority[next] > priority[current] ? next : current;
 }
 
-function evaluateGuess(guess: string, answer: string): TileState[] {
-  const result: TileState[] = Array.from({ length: COL_COUNT }, () => "absent");
-  const answerChars = answer.split("");
-  const guessChars = guess.split("");
-
-  for (let i = 0; i < COL_COUNT; i += 1) {
-    if (guessChars[i] === answerChars[i]) {
-      result[i] = "correct";
-      answerChars[i] = "_";
-    }
-  }
-
-  for (let i = 0; i < COL_COUNT; i += 1) {
-    if (result[i] === "correct") continue;
-    const presentAt = answerChars.indexOf(guessChars[i]);
-    if (presentAt !== -1) {
-      result[i] = "present";
-      answerChars[presentAt] = "_";
-    }
-  }
-
-  return result;
-}
-
 function WordleGameUI() {
   const [gameGrid, setGameGrid] = useState<Tile[]>(() =>
     Array.from({ length: ROW_COUNT * COL_COUNT }, () => ({
@@ -137,29 +115,12 @@ function WordleGameUI() {
   );
   const [currentRow, setCurrentRow] = useState(0);
   const [currentCol, setCurrentCol] = useState(0);
-  const [answer, setAnswer] = useState("");
   const [gameOver, setGameOver] = useState(false);
   const [message, setMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [keyboardLetterStates, setKeyboardLetterStates] = useState<
     Record<string, KeyCapState>
   >({});
-
-  const fetchWord = async (): Promise<WordleApiResponse> => {
-    const res = await fetch(`${WORD_API_BASE}/word`);
-    if (!res.ok) {
-      throw new Error(`Failed to fetch /word: ${res.status}`);
-    }
-    const data = (await res.json()) as WordleApiResponse;
-    setAnswer((data.solution ?? "").toLowerCase());
-    return data;
-  };
-
-  useEffect(() => {
-    fetchWord().catch((error) => {
-      setMessage("Could not load puzzle word");
-      console.error(error);
-    });
-  }, []);
 
   useEffect(() => {
     if (!message) return;
@@ -194,14 +155,10 @@ function WordleGameUI() {
     setCurrentCol(nextCol);
   };
 
-  const submitGuess = () => {
-    if (gameOver) return;
+  const submitGuess = async () => {
+    if (gameOver || isSubmitting) return;
     if (currentCol < COL_COUNT) {
       setMessage("Not enough letters");
-      return;
-    }
-    if (!answer) {
-      setMessage("Puzzle not ready");
       return;
     }
 
@@ -211,51 +168,68 @@ function WordleGameUI() {
       .map((tile) => tile.letter.toLowerCase())
       .join("");
 
-    if (!WORD_BANK_SET.has(guess)) {
-      setMessage("Not in word list");
-      return;
-    }
+    try {
+      setIsSubmitting(true);
+      const res = await fetch(`${WORD_API_BASE}/guess`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guess }),
+      });
 
-    const statuses = evaluateGuess(guess, answer);
-    setGameGrid((prev) => {
-      const next = [...prev];
-      for (let i = 0; i < COL_COUNT; i += 1) {
-        const tileIndex = rowStart + i;
-        next[tileIndex] = { ...next[tileIndex], status: statuses[i] };
+      if (!res.ok) {
+        throw new Error(`Failed to evaluate guess: ${res.status}`);
       }
-      return next;
-    });
-    setKeyboardLetterStates((prev) => {
-      const next = { ...prev };
-      for (let i = 0; i < COL_COUNT; i += 1) {
-        const letter = guess[i].toUpperCase();
-        const evaluatedState = statuses[i];
-        if (evaluatedState === "correct" || evaluatedState === "present" || evaluatedState === "absent") {
-          next[letter] = promoteKeyState(next[letter] ?? "default", evaluatedState);
+
+      const data = (await res.json()) as GuessApiResponse;
+      if (!data.validWord) {
+        setMessage("Not in word list");
+        return;
+      }
+
+      const statuses = data.statuses;
+      setGameGrid((prev) => {
+        const next = [...prev];
+        for (let i = 0; i < COL_COUNT; i += 1) {
+          const tileIndex = rowStart + i;
+          next[tileIndex] = { ...next[tileIndex], status: statuses[i] };
         }
+        return next;
+      });
+
+      setKeyboardLetterStates((prev) => {
+        const next = { ...prev };
+        for (let i = 0; i < COL_COUNT; i += 1) {
+          const letter = guess[i].toUpperCase();
+          next[letter] = promoteKeyState(next[letter] ?? "default", statuses[i]);
+        }
+        return next;
+      });
+
+      if (data.isCorrect) {
+        setGameOver(true);
+        setMessage("You win!");
+        return;
       }
-      return next;
-    });
 
-    if (guess === answer) {
-      setGameOver(true);
-      setMessage("You win!");
-      return;
+      if (currentRow === ROW_COUNT - 1) {
+        setGameOver(true);
+        setMessage("Out of guesses");
+        return;
+      }
+
+      setCurrentRow((row) => row + 1);
+      setCurrentCol(0);
+    } catch (error) {
+      setMessage("Could not validate guess");
+      console.error(error);
+    } finally {
+      setIsSubmitting(false);
     }
-
-    if (currentRow === ROW_COUNT - 1) {
-      setGameOver(true);
-      setMessage(`Word was ${answer.toUpperCase()}`);
-      return;
-    }
-
-    setCurrentRow((row) => row + 1);
-    setCurrentCol(0);
   };
 
   const onInputKey = (key: string) => {
     if (key === "ENTER") {
-      submitGuess();
+      void submitGuess();
       return;
     }
     if (key === "⌫") {
@@ -274,7 +248,7 @@ function WordleGameUI() {
         return;
       }
       if (e.key === "Enter") {
-        submitGuess();
+        void submitGuess();
         return;
       }
       if (e.key.length === 1 && /[a-zA-Z]/.test(e.key)) {
@@ -283,7 +257,7 @@ function WordleGameUI() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [currentCol, currentRow, answer, gameGrid, gameOver]);
+  }, [currentCol, currentRow, gameGrid, gameOver, isSubmitting]);
 
   return (
     <div className="h-[100vh] w-[100vw] grid grid-rows-[50px_1fr] bg-[#121213] text-[#d7dadc]">
