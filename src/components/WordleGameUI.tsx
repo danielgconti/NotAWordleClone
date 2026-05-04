@@ -10,9 +10,12 @@ type WordleApiResponse = { solution?: string };
 
 const ROW_COUNT = 6;
 const COL_COUNT = 5;
-const WORD_BANK_SET = new Set((wordBank as string[]).map((word) => word.toLowerCase()));
+const WORD_BANK_SET = new Set(
+  (wordBank as string[]).map((word) => word.toLowerCase()),
+);
 const WORD_API_BASE =
-  import.meta.env.VITE_WORD_API_BASE?.replace(/\/$/, "") ?? "http://3.15.180.103:3001";
+  import.meta.env.VITE_WORD_API_BASE?.replace(/\/$/, "") ??
+  "http://3.15.180.103:3001";
 
 /** Static demo row to show evaluated tile colors; remainder are empty placeholders. */
 
@@ -55,15 +58,6 @@ const KEYBOARD_ROWS: { keys: string; wide?: "enter" | "back" }[][] = [
 
 type KeyCapState = "default" | "correct" | "present" | "absent";
 
-/** Matches first demo row so key colors mirror the board preview. */
-const KEYBOARD_LETTER_STATES: Record<string, KeyCapState> = {
-  W: "correct",
-  E: "present",
-  A: "absent",
-  R: "absent",
-  Y: "correct",
-};
-
 function tileClass(state: TileState): string {
   const base = "guess-grid-square";
   switch (state) {
@@ -95,6 +89,19 @@ function keyCapClass(state: KeyCapState): string {
     default:
       return `${base} bg-[#818384]`;
   }
+}
+
+function promoteKeyState(
+  current: KeyCapState,
+  next: Exclude<TileState, "empty" | "filled">,
+): KeyCapState {
+  const priority: Record<KeyCapState, number> = {
+    default: 0,
+    absent: 1,
+    present: 2,
+    correct: 3,
+  };
+  return priority[next] > priority[current] ? next : current;
 }
 
 function evaluateGuess(guess: string, answer: string): TileState[] {
@@ -133,6 +140,9 @@ function WordleGameUI() {
   const [answer, setAnswer] = useState("");
   const [gameOver, setGameOver] = useState(false);
   const [message, setMessage] = useState("");
+  const [keyboardLetterStates, setKeyboardLetterStates] = useState<
+    Record<string, KeyCapState>
+  >({});
 
   const fetchWord = async (): Promise<WordleApiResponse> => {
     const res = await fetch(`${WORD_API_BASE}/word`);
@@ -215,6 +225,17 @@ function WordleGameUI() {
       }
       return next;
     });
+    setKeyboardLetterStates((prev) => {
+      const next = { ...prev };
+      for (let i = 0; i < COL_COUNT; i += 1) {
+        const letter = guess[i].toUpperCase();
+        const evaluatedState = statuses[i];
+        if (evaluatedState === "correct" || evaluatedState === "present" || evaluatedState === "absent") {
+          next[letter] = promoteKeyState(next[letter] ?? "default", evaluatedState);
+        }
+      }
+      return next;
+    });
 
     if (guess === answer) {
       setGameOver(true);
@@ -268,11 +289,9 @@ function WordleGameUI() {
     <div className="h-[100vh] w-[100vw] grid grid-rows-[50px_1fr] bg-[#121213] text-[#d7dadc]">
       {/* Nav */}
       <header className="flex flex-row justify-between items-center p-4">
-        <Link to="/" className="">
-          Home
-        </Link>
-        <h1 className="">WORDLE</h1>
-        <div>yo</div>
+        <Link to="/" className=""></Link>
+        <h1 className="">NOT WORDLE</h1>
+        <div></div>
       </header>
 
       <div className="flex w-full flex-col items-center">
@@ -309,7 +328,7 @@ function WordleGameUI() {
                 const wide = Boolean(key.wide);
                 const letterState =
                   label.length === 1
-                    ? (KEYBOARD_LETTER_STATES[label] ?? "default")
+                    ? (keyboardLetterStates[label] ?? "default")
                     : "default";
                 return (
                   <button
