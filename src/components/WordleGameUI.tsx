@@ -11,6 +11,8 @@ type WordleApiResponse = { solution?: string };
 const ROW_COUNT = 6;
 const COL_COUNT = 5;
 const WORD_BANK_SET = new Set((wordBank as string[]).map((word) => word.toLowerCase()));
+const WORD_API_BASE =
+  import.meta.env.VITE_WORD_API_BASE?.replace(/\/$/, "") ?? "http://3.15.180.103:3001";
 
 /** Static demo row to show evaluated tile colors; remainder are empty placeholders. */
 
@@ -133,7 +135,7 @@ function WordleGameUI() {
   const [message, setMessage] = useState("");
 
   const fetchWord = async (): Promise<WordleApiResponse> => {
-    const res = await fetch("http://localhost:3001/word");
+    const res = await fetch(`${WORD_API_BASE}/word`);
     if (!res.ok) {
       throw new Error(`Failed to fetch /word: ${res.status}`);
     }
