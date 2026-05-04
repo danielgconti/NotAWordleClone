@@ -1,0 +1,5 @@
+.guess-grid-square {
+  border: rgb(147, 147, 147) 1px solid;
+  height: 75px;
+  width: 75px;
+}
